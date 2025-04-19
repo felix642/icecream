@@ -737,7 +737,7 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
         }
     }
 
-    if (!seen_c && !seen_s) {
+    if (!seen_c && !seen_s && !compiler_is_clang_tidy(job)) {
         if (!always_local) {
             log_warning() << "neither -c nor -S argument, building locally" << endl;
         }
@@ -748,8 +748,7 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
         }
 
         args.append("-S", Arg_Remote);
-    } else {
-        assert( seen_c );
+    } else if (seen_c) {
         args.append("-c", Arg_Remote);
         if (seen_split_dwarf) {
             job.setDwarfFissionEnabled(true);
@@ -896,9 +895,9 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
         job.setBlockRewriteIncludes(true);
     }
 
-    if( !always_local && compiler_only_rewrite_includes(job) && !compiler_is_clang(job)) {
+    if( !always_local && compiler_only_rewrite_includes(job) && !compiler_is_clang(job) && !compiler_is_clang_tidy(job)) {
         // Inject this, so that remote compilation uses -fpreprocessed -fdirectives-only
-        args.append("-fdirectives-only", Arg_Remote);
+       args.append("-fdirectives-only", Arg_Remote);
     }
 
     if( !always_local && !seen_target && compiler_is_clang(job)) {

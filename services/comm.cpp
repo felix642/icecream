@@ -89,8 +89,10 @@ static int zstd_compression()
  * of that is definitely fishy, and we must reject it (we're running as root,
  * so be cautious).
  */
-
-#define MAX_MSG_SIZE 1 * 1024 * 1024
+// TODO clang-tidy outputs to stdout, which might be a huge amount of data.
+// Max limit was changed to 5Mb for now, but it might be worth to look
+// for an alternative.
+#define MAX_MSG_SIZE 5 * 1024 * 1024
 
 /*
  * On a slow and congested network it's possible for a send call to get starved.
@@ -2185,6 +2187,11 @@ void CompileFileMsg::send_to_channel(MsgChannel *c) const
 // hardcoded).  For clang, the binary is just clang for both C/C++.
 string CompileFileMsg::remote_compiler_name() const
 {
+    if(job->compilerName().find("clang-tidy") != string::npos)
+    {
+        return "clang-tidy";
+    }
+
     if (job->compilerName().find("clang") != string::npos) {
         return "clang";
     }

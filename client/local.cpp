@@ -159,7 +159,18 @@ bool compiler_is_clang(const CompileJob &job)
         return true;
     }
 #endif
-    return job.compilerName().find("clang") != string::npos;
+    return job.compilerName().find("clang") != string::npos && job.compilerName().find("clang-tidy") == string::npos;
+}
+
+bool compiler_is_clang_tidy(const CompileJob &job)
+{
+    if (job.language() == CompileJob::Lang_Custom) {
+        return false;
+    }
+
+    assert(job.compilerName().find('/') == string::npos);
+
+    return job.compilerName().find("clang-tidy") != string::npos;
 }
 
 /*

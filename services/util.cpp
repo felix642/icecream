@@ -73,7 +73,7 @@ string find_prefix(const string &basename)
 
 bool is_c_compiler(const string& compiler)
 {
-    string name = find_basename(compiler);
+    string name = find_basename(compiler); 
     if( name.find("++") != string::npos )
         return false;
     return name.find("gcc") != string::npos || name.find("clang") != string::npos
@@ -110,7 +110,7 @@ string get_c_compiler(const string& compiler)
 
 string get_cpp_compiler(const string& compiler)
 {
-    if(compiler.empty())
+    if(compiler.empty() || compiler.find("clang-tidy") != string::npos)
         return compiler;
     size_t slash = compiler.rfind('/');
     size_t pos = compiler.rfind( "++" );

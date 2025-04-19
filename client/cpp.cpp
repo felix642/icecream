@@ -180,15 +180,16 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         if (compiler_only_rewrite_includes(job)) {
             if( compiler_is_clang(job)) {
                 argv[i++] = strdup("-frewrite-includes");
-            } else { // gcc
+            } else if (!compiler_is_clang_tidy(job)) { // gcc
                 argv[i++] = strdup("-fdirectives-only");
             }
         }
-
+        
         argv[i++] = nullptr;
     }
 
-    string argstxt = argv[ 0 ];
+    // TODO find clang's path from clang-tidy's path 
+    string argstxt = "/usr/bin/clang++-19";
     for( int i = 1; argv[ i ] != nullptr; ++i ) {
         argstxt += ' ';
         argstxt += argv[ i ];
@@ -203,7 +204,30 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
     }
 
     dcc_increment_safeguard(SafeguardStepCompiler);
-    execv(argv[0], argv);
+
+    std::vector<char *> filteredArgs;
+    filteredArgs.push_back(argv[0]);
+
+    for (int i = 1; argv[ i ] != nullptr; ++i) {
+        std::string arg = argv[i];
+
+        if (arg.find("--checks") != string::npos) {
+            continue;
+        }
+
+        if (arg.find("--warnings-as-errors") != string::npos) {
+            continue;
+        }
+
+        if(arg.find("--extra-arg") != string::npos) {
+            continue;
+        }
+
+        filteredArgs.push_back(argv[i]);
+    }
+    filteredArgs.push_back(nullptr);
+    
+    execv("/usr/bin/clang++-19", filteredArgs.data());
     int exitcode = ( errno == ENOENT ? 127 : 126 );
     ostringstream errmsg;
     errmsg << "execv " << argv[0] << " failed";

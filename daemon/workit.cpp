@@ -119,6 +119,23 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
     }
     trace() << "remote compile arguments:" << argstxt << endl;
 
+    int input_fd = -1;
+    string input_file = "";
+    if( j.compilerName().find("clang-tidy") != string::npos)
+    {
+        // TODO, delete the file once the compilation is over.
+        // TODO, Clang-tidy does not respect line directives.
+        // This means that the reported lines will not match what the user expects.
+        // We should either fix this bug in clang-tidy
+        // or relaunch a compilation on the user's machine to make sure the diagnostic is valid.
+        input_file = tmp_root + "/icetidy_input_" + to_string(getpid()) + ".cpp";
+        input_fd = open(input_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (input_fd == -1) {
+            log_error() << "Could not create temporary input file" << endl;
+            return EXIT_DISTCC_FAILED;
+        }
+    }
+
     int sock_err[2];
     int sock_out[2];
     int sock_in[2];
@@ -221,10 +238,12 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         char **argv = new char*[argc + 1];
         int i = 0;
         bool clang = false;
+        bool clang_tidy = false;
 
         if (IS_PROTOCOL_VERSION(30, client)) {
             assert(!j.compilerName().empty());
-            clang = (j.compilerName().find("clang") != string::npos);
+            clang = (j.compilerName().find("clang") != string::npos) && (j.compilerName().find("clang-tidy") == string::npos);
+            clang_tidy = j.compilerName().find("clang-tidy") != string::npos;
             argv[i++] = strdup(("/usr/bin/" + j.compilerName()).c_str());
         } else {
             if (j.language() == CompileJob::Lang_C) {
@@ -236,18 +255,20 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             }
         }
 
-        argv[i++] = strdup("-x");
-        if (j.language() == CompileJob::Lang_C) {
-          argv[i++] = strdup("c");
-        } else if (j.language() == CompileJob::Lang_CXX) {
-          argv[i++] = strdup("c++");
-        } else if (j.language() == CompileJob::Lang_OBJC) {
-          argv[i++] = strdup("objective-c");
-        } else if (j.language() == CompileJob::Lang_OBJCXX) {
-          argv[i++] = strdup("objective-c++");
-        } else {
-            error_client(client, "language not supported");
-            log_perror("language not supported");
+        if(!clang_tidy) {
+            argv[i++] = strdup("-x");
+            if (j.language() == CompileJob::Lang_C) {
+              argv[i++] = strdup("c");
+            } else if (j.language() == CompileJob::Lang_CXX) {
+              argv[i++] = strdup("c++");
+            } else if (j.language() == CompileJob::Lang_OBJC) {
+              argv[i++] = strdup("objective-c");
+            } else if (j.language() == CompileJob::Lang_OBJCXX) {
+              argv[i++] = strdup("objective-c++");
+            } else {
+                error_client(client, "language not supported");
+                log_perror("language not supported");
+            }
         }
 
         if( clang ) {
@@ -277,30 +298,33 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             argv[i++] = strdup(it->c_str());
         }
 
-        if (!clang) {
-            argv[i++] = strdup("-fpreprocessed");
-        }
-
-        argv[i++] = strdup("-");
-        argv[i++] = strdup("-o");
-        argv[i++] = strdup(file_name.c_str());
-
-        if (!clang) {
-            argv[i++] = strdup("--param");
-            sprintf(buffer, "ggc-min-expand=%d", ggc_min_expand_heuristic(mem_limit));
-            argv[i++] = strdup(buffer);
-            argv[i++] = strdup("--param");
-            sprintf(buffer, "ggc-min-heapsize=%d", ggc_min_heapsize_heuristic(mem_limit));
-            argv[i++] = strdup(buffer);
-        }
-
-        if (clang) {
-            argv[i++] = strdup("-no-canonical-prefixes");    // otherwise clang tries to access /proc/self/exe
-        }
-
-        if (!clang && j.dwarfFissionEnabled()) {
-            sprintf(buffer, "-fdebug-prefix-map=%s/=/", tmp_root.c_str());
-            argv[i++] = strdup(buffer);
+        if(!clang_tidy) {
+            if (!clang) {
+                argv[i++] = strdup("-fpreprocessed");
+            }
+    
+            argv[i++] = strdup("-");
+            argv[i++] = strdup("-o");
+            argv[i++] = strdup(file_name.c_str());
+    
+            if (!clang) {
+                argv[i++] = strdup("--param");
+                sprintf(buffer, "ggc-min-expand=%d", ggc_min_expand_heuristic(mem_limit));
+                argv[i++] = strdup(buffer);
+                argv[i++] = strdup("--param");
+                sprintf(buffer, "ggc-min-heapsize=%d", ggc_min_heapsize_heuristic(mem_limit));
+                argv[i++] = strdup(buffer);
+            }
+    
+            if (clang) {
+                argv[i++] = strdup("-no-canonical-prefixes");    // otherwise clang tries to access /proc/self/exe
+            }
+            if (!clang && j.dwarfFissionEnabled()) {
+                sprintf(buffer, "-fdebug-prefix-map=%s/=/", tmp_root.c_str());
+                argv[i++] = strdup(buffer);
+            }
+        } else {
+            argv[i++] = strdup(input_file.c_str());
         }
 
         // before you add new args, check above for argc
@@ -346,12 +370,33 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             log_perror("close failed");
         }
 
-        if (-1 == dup2(sock_in[0], STDIN_FILENO)){
-            log_perror("dup2 failed");
-        }
-
-        if ((-1 == close(sock_in[0])) && (errno != EBADF)){
-            log_perror("close failed");
+        // Clang-tidy does not support receiving data from stdin.
+        // So instead we create a file on disk to write the data received
+        // and we pass it to the static analyzer.
+        if(clang_tidy) {
+            char buffer[4096];
+            ssize_t bytes;
+            while ((bytes = read(sock_in[0], buffer, sizeof(buffer))) > 0) {
+                std::cout << bytes << '\n';
+                if (write(input_fd, buffer, bytes) != bytes) {
+                    log_perror("write to input file failed");
+                    _exit(143);
+                }
+            }
+            if (bytes < 0) {
+                log_perror("read from socket failed");
+                _exit(143);
+            }
+        
+            close(input_fd);
+            close(sock_in[0]);
+        } else {
+            if (-1 == dup2(sock_in[0], input_fd)) {
+                log_perror("dup2 failed");
+            }
+            if ((-1 == close(sock_in[0])) && (errno != EBADF)){
+                log_perror("close failed");
+            }
         }
 
         if ((-1 == close(main_sock[0])) && (errno != EBADF)){
@@ -402,23 +447,30 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         log_perror("close failed");
     }
 
-    for (;;) {
-        char resultByte;
-        ssize_t n = ::read(main_sock[0], &resultByte, 1);
 
-        if (n == -1 && errno == EINTR) {
-            continue;    // Ignore
+    // Synchronisation mechanism is different with clang-tidy.
+    // We have to write the data on disk first, so bypass
+    // this code (for now?)
+    if(j.compilerName().find("clang-tidy") == string::npos)
+    {
+        for (;;) {
+            char resultByte;
+            ssize_t n = ::read(main_sock[0], &resultByte, 1);
+    
+            if (n == -1 && errno == EINTR) {
+                continue;    // Ignore
+            }
+    
+            if (n == 1) {
+                rmsg.status = resultByte;
+    
+                log_error() << "compiler did not start" << endl;
+                error_client(client, "compiler did not start");
+                return EXIT_COMPILER_MISSING;
+            }
+    
+            break; // != EINTR
         }
-
-        if (n == 1) {
-            rmsg.status = resultByte;
-
-            log_error() << "compiler did not start" << endl;
-            error_client(client, "compiler did not start");
-            return EXIT_COMPILER_MISSING;
-        }
-
-        break; // != EINTR
     }
 
     if ((-1 == close(main_sock[0])) && (errno != EBADF)){
