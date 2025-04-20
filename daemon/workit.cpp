@@ -189,9 +189,9 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         return EXIT_DISTCC_FAILED;
     }
 
-    const bool clang_tidy = false;
+    bool clang_tidy = false;
     if (IS_PROTOCOL_VERSION(30, client)) {
-         j.compilerName().find("clang-tidy") != string::npos;
+        clang_tidy = j.compilerName().find("clang-tidy") != string::npos;
     }
 
     /* Testing */

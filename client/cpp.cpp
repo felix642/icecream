@@ -319,6 +319,10 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         }
 
         argv[i++] = strdup("-E");
+        if(compiler_is_clang_tidy(job)) {
+            argv[i++] = strdup("-C");
+        }
+
         argv[i++] = strdup(job.inputFile().c_str());
 
         if (compiler_only_rewrite_includes(job)) {
