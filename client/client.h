@@ -56,6 +56,7 @@ extern int analyse_argv(const char * const *argv, CompileJob &job, bool icerun,
 
 /* In cpp.cpp.  */
 extern pid_t call_cpp(CompileJob &job, int fdwrite, int fdread = -1);
+extern pid_t get_clang_tidy_config(CompileJob& job, int fdwrite, int fdread);
 
 /* In local.cpp.  */
 extern int build_local(CompileJob &job, MsgChannel *daemon, struct rusage *usage = 0);

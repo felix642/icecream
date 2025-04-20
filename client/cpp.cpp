@@ -144,6 +144,64 @@ inline int str_startswith(const char *head, const char *worm)
     return !strncmp(head, worm, strlen(head));
 }
 
+pid_t get_clang_tidy_config(CompileJob& job, int fdwrite, int fdread)
+{
+    flush_debug();
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        log_perror("failed to fork:");
+        return -1; /* probably */
+    }
+
+    if (pid != 0) {
+        /* Parent.  Close the write fd.  */
+        if (fdwrite > -1) {
+            if ((-1 == close(fdwrite)) && (errno != EBADF)){
+                log_perror("close() failed");
+            }
+        }
+
+        return pid;
+    }
+
+    /* Child.  Close the read fd, in case we have one.  */
+    if (fdread > -1) {
+        if ((-1 == close(fdread)) && (errno != EBADF)){
+            log_perror("close failed");
+        }
+    }
+
+    int ret = dcc_ignore_sigpipe(0);
+
+    if (ret) {  /* set handler back to default */
+        _exit(ret);
+    }
+
+
+    char **argv;
+    argv = new char*[3 + 1];
+    argv[0] = strdup(find_compiler(job).c_str());
+    argv[1] = strdup("--dump-config");
+    argv[2] = strdup(job.inputFile().c_str());
+    argv[3] = nullptr;
+
+    if (fdwrite != STDOUT_FILENO) {
+        /* Ignore failure */
+        close(STDOUT_FILENO);
+        dup2(fdwrite, STDOUT_FILENO);
+        close(fdwrite);
+    }
+
+    execv(find_compiler(job).c_str(), argv);
+    int exitcode = ( errno == ENOENT ? 127 : 126 );
+    ostringstream errmsg;
+    errmsg << "execv " << argv[0] << " failed";
+    log_perror(errmsg.str());
+    _exit(exitcode);
+    return -1;
+}
+
 /**
  * If the input filename is a plain source file rather than a
  * preprocessed source file, then preprocess it to a temporary file
@@ -338,6 +396,8 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
                 } else if (str_startswith("-isystem", iter->data())) {
                     filteredArgs.push_back(strdup(iter->data()));
                     iter++;
+                    filteredArgs.push_back(strdup(iter->data()));
+                } else if (str_startswith("-std=", iter->data())) {
                     filteredArgs.push_back(strdup(iter->data()));
                 }
             }

@@ -595,6 +595,44 @@ static int build_remote_int(CompileJob &job, UseCSMsg *usecs, MsgChannel *local_
             throw client_error(12, "Error 12 - failed to send file to remote");
         }
 
+        int tidy_sockets[2];
+        if (create_large_pipe(tidy_sockets) != 0) {
+            log_perror("build_remote_in pipe");
+            /* for all possible cases, this is something severe */
+            throw client_error(32, "Error 18 - (Unable to create pipe)");
+        }
+
+        pid_t tidy_pid = get_clang_tidy_config(job, tidy_sockets[1], tidy_sockets[0]);
+
+        if (tidy_pid == -1) {
+            throw client_error(18, "Error 18 - (fork error?)");
+        }
+
+        try {
+            log_block bl2("write_fd_to_server from clang-tidy");
+            write_fd_to_server(tidy_sockets[0], cserver);
+        } catch (...) {
+            kill(tidy_pid, SIGTERM);
+            throw;
+        }
+
+        log_block wait_cpp("wait for clang-tidy config");
+
+        while (waitpid(tidy_pid, &status, 0) < 0 && errno == EINTR) {}
+
+        if (shell_exit_status(status) != 0) {
+            delete cserver;
+            cserver = nullptr;
+            log_warning() << "get_clang_tidy_config process failed with exit status " << shell_exit_status(status) << endl;
+            return shell_exit_status(status);
+        }
+
+        // Send the clang-tidy file
+        if (!cserver->send_msg(EndMsg())) {
+            log_warning() << "write of end failed" << endl;
+            throw client_error(12, "Error 12 - failed to send file to remote");
+        }
+
         dcc_unlock();
 
         Msg *msg;

@@ -120,7 +120,9 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
     trace() << "remote compile arguments:" << argstxt << endl;
 
     int input_fd = -1;
+    int config_fd = -1;
     string input_file = "";
+    string config_file = "";
     if(j.compilerName().find("clang-tidy") != string::npos)
     {
         // TODO, delete the file once the compilation is over.
@@ -137,11 +139,19 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             log_error() << "Could not create temporary input file" << endl;
             return EXIT_DISTCC_FAILED;
         }
+
+        config_file = compilation_path + '/' + ".clang-tidy";
+        config_fd = open(config_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        if (config_fd == -1) {
+            log_error() << "Could not create temporary config file" << endl;
+            return EXIT_DISTCC_FAILED;
+        }
     }
 
     int sock_err[2];
     int sock_out[2];
     int sock_in[2];
+    int ct_sock[2];
     int main_sock[2];
     char buffer[4096];
 
@@ -167,6 +177,21 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
 
     if (fcntl(sock_in[1], F_SETFL, O_NONBLOCK)) {
         return EXIT_DISTCC_FAILED;
+    }
+
+    // TODO I don't see the need to create a new fd.
+    // maybe reuse sock_in instead
+    if (create_large_pipe(ct_sock)) {
+        return EXIT_DISTCC_FAILED;
+    }
+
+    if (fcntl(ct_sock[1], F_SETFL, O_NONBLOCK)) {
+        return EXIT_DISTCC_FAILED;
+    }
+
+    const bool clang_tidy = false;
+    if (IS_PROTOCOL_VERSION(30, client)) {
+         j.compilerName().find("clang-tidy") != string::npos;
     }
 
     /* Testing */
@@ -241,12 +266,10 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         char **argv = new char*[argc + 1];
         int i = 0;
         bool clang = false;
-        bool clang_tidy = false;
 
         if (IS_PROTOCOL_VERSION(30, client)) {
             assert(!j.compilerName().empty());
             clang = (j.compilerName().find("clang") != string::npos) && (j.compilerName().find("clang-tidy") == string::npos);
-            clang_tidy = j.compilerName().find("clang-tidy") != string::npos;
             argv[i++] = strdup(("/usr/bin/" + j.compilerName()).c_str());
         } else {
             if (j.language() == CompileJob::Lang_C) {
@@ -373,6 +396,10 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             log_perror("close failed");
         }
 
+        if ((-1 == close(ct_sock[1])) && (errno != EBADF)){
+            log_perror("close failed");
+        }
+
         // Clang-tidy does not support receiving data from stdin.
         // So instead we create a file on disk to write the data received
         // and we pass it to the static analyzer.
@@ -392,6 +419,21 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         
             close(input_fd);
             close(sock_in[0]);
+
+            // Write the config file on disk.
+            while ((bytes = read(ct_sock[0], buffer, sizeof(buffer))) > 0) {
+                if (write(config_fd, buffer, bytes) != bytes) {
+                    log_perror("write to input file failed");
+                    _exit(143);
+                }
+            }
+            if (bytes < 0) {
+                log_perror("read from socket failed");
+                _exit(143);
+            }
+        
+            close(config_fd);
+            close(ct_sock[0]);
         } else {
             if (-1 == dup2(sock_in[0], input_fd)) {
                 log_perror("dup2 failed");
@@ -485,6 +527,7 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
     int return_value = 0;
     // Got EOF for preprocessed input. stdout send may be still pending.
     bool input_complete = false;
+    bool has_received_file = false;
     // Pending data to send to stdin
     FileChunkMsg *fcmsg = nullptr;
     size_t off = 0;
@@ -504,16 +547,29 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
                     delete msg;
                 } else {
                     if (*msg == Msg::END) {
-                        input_complete = true;
-
-                        if (!fcmsg && sock_in[1] != -1) {
-                            if (-1 == close(sock_in[1])){
-                                log_perror("close failed");
+                        if(clang_tidy && !has_received_file)
+                        {
+                            has_received_file = true;
+                            if (!fcmsg && sock_in[1] != -1) {
+                                if (-1 == close(sock_in[1])){
+                                    log_perror("close failed");
+                                }
+                                sock_in[1] = -1;
                             }
-                            sock_in[1] = -1;
+                            continue;
+                        } else {
+                            input_complete = true;
+                            if (!fcmsg && ct_sock[1] != -1) {
+                                if (-1 == close(ct_sock[1])){
+                                    log_perror("close failed");
+                                }
+                                ct_sock[1] = -1;
+                            }
+                            delete msg;
                         }
-
-                        delete msg;
+                        
+                        delete fcmsg;
+                        fcmsg = nullptr;
                     } else if (*msg == Msg::FILE_CHUNK) {
                         fcmsg = static_cast<FileChunkMsg*>(msg);
                         off = 0;
@@ -542,7 +598,7 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             }
         }
 
-        vector< pollfd > pollfds;
+        vector<pollfd> pollfds;
         pollfd pfd; // tmp variable
 
         if (sock_out[0] >= 0) {
@@ -557,7 +613,7 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             pollfds.push_back(pfd);
         }
 
-        if (sock_in[1] == -1 && fcmsg) {
+        if (sock_in[1] == -1 && ct_sock[1] == -1 && fcmsg) {
             // This state can occur when the compiler has terminated before
             // all file input is received from the client.  The daemon must continue
             // reading all file input from the client because the client expects it to.
@@ -585,6 +641,12 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         if (input_complete) {
             pfd.fd = death_pipe[0];
             pfd.events = POLLIN;
+            pollfds.push_back(pfd);
+        }
+
+        if(fcmsg && has_received_file && ct_sock[1] != -1) {
+            pfd.fd = ct_sock[1];
+            pfd.events = POLLOUT;
             pollfds.push_back(pfd);
         }
 
@@ -635,7 +697,7 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
                     }
 
                     kill(pid, SIGTERM); // Most likely crashed anyway ...
-                    if (input_complete) {
+                    if (has_received_file) {
                         return_value = EXIT_COMPILER_CRASHED;
                     }
                     delete fcmsg;
@@ -653,11 +715,47 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
                     delete fcmsg;
                     fcmsg = nullptr;
 
-                    if (input_complete) {
+                    if (has_received_file) {
                         if (-1 == close(sock_in[1])){
                             log_perror("close failed");
                         }
                         sock_in[1] = -1;
+                    }
+                }
+            }
+
+            if (fcmsg && pollfd_is_set(pollfds, ct_sock[1], POLLOUT)) {
+                ssize_t bytes = write(ct_sock[1], fcmsg->buffer + off, fcmsg->len - off);
+
+                if (bytes < 0) {
+                    if (errno == EINTR) {
+                        continue;
+                    }
+
+                    kill(pid, SIGTERM); // Most likely crashed anyway ...
+                    if (input_complete) {
+                        return_value = EXIT_COMPILER_CRASHED;
+                    }
+                    delete fcmsg;
+                    fcmsg = nullptr;
+                    if (-1 == close(ct_sock[1])){
+                        log_perror("close failed");
+                    }
+                    ct_sock[1] = -1;
+                    continue;
+                }
+
+                off += bytes;
+
+                if (off == fcmsg->len) {
+                    delete fcmsg;
+                    fcmsg = nullptr;
+
+                    if (input_complete) {
+                        if (-1 == close(ct_sock[1])){
+                            log_perror("close failed");
+                        }
+                        ct_sock[1] = -1;
                     }
                 }
             }
