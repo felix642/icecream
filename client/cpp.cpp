@@ -188,8 +188,26 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         argv[i++] = nullptr;
     }
 
-    // TODO find clang's path from clang-tidy's path 
-    string argstxt = "/usr/bin/clang++-19";
+    // Assume that both clang(++) and clang-tidy are located in the same directory.
+    string compiler = argv[0];
+    if(compiler_is_clang_tidy(job)) {
+        size_t pos = compiler.find("-tidy");
+        if (pos != string::npos) {
+            CompileJob::Language lang = job.language();
+            if(lang == CompileJob::Lang_CXX) {
+                compiler.replace(pos, 5, "++");
+            } else if (lang == CompileJob::Lang_C) {
+                compiler.replace(pos, 5, "");
+            } else {
+                ostringstream errmsg;
+                errmsg << "Unknown language " << lang;
+                log_perror(errmsg.str());
+                assert(0);
+            }
+        }
+    }
+
+    string argstxt = compiler;
     for( int i = 1; argv[ i ] != nullptr; ++i ) {
         argstxt += ' ';
         argstxt += argv[ i ];
@@ -206,7 +224,7 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
     dcc_increment_safeguard(SafeguardStepCompiler);
 
     std::vector<char *> filteredArgs;
-    filteredArgs.push_back(argv[0]);
+    filteredArgs.push_back(&compiler[0]);
 
     for (int i = 1; argv[ i ] != nullptr; ++i) {
         std::string arg = argv[i];
@@ -227,7 +245,7 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
     }
     filteredArgs.push_back(nullptr);
     
-    execv("/usr/bin/clang++-19", filteredArgs.data());
+    execv(compiler.c_str(), filteredArgs.data());
     int exitcode = ( errno == ENOENT ? 127 : 126 );
     ostringstream errmsg;
     errmsg << "execv " << argv[0] << " failed";
