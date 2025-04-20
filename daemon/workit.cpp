@@ -29,7 +29,7 @@
 #include "logging.h"
 #include "pipes.h"
 #include <sys/select.h>
-#include <algorithm>
+#include <sys/stat.h>
 
 #ifdef __FreeBSD__
 #include <sys/param.h>
@@ -121,14 +121,17 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
 
     int input_fd = -1;
     string input_file = "";
-    if( j.compilerName().find("clang-tidy") != string::npos)
+    if(j.compilerName().find("clang-tidy") != string::npos)
     {
         // TODO, delete the file once the compilation is over.
         // TODO, Clang-tidy does not respect line directives.
         // This means that the reported lines will not match what the user expects.
         // We should either fix this bug in clang-tidy
         // or relaunch a compilation on the user's machine to make sure the diagnostic is valid.
-        input_file = tmp_root + "/icetidy_input_" + to_string(getpid()) + ".cpp";
+        std::string compilation_path = tmp_root + "/" + to_string(getpid());
+        mkdir(compilation_path.c_str(), 0700);
+        size_t slash_index = j.inputFile().rfind('/'); 
+        input_file = compilation_path + '/' + j.inputFile().substr(slash_index+1);
         input_fd = open(input_file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (input_fd == -1) {
             log_error() << "Could not create temporary input file" << endl;
@@ -377,7 +380,6 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             char buffer[4096];
             ssize_t bytes;
             while ((bytes = read(sock_in[0], buffer, sizeof(buffer))) > 0) {
-                std::cout << bytes << '\n';
                 if (write(input_fd, buffer, bytes) != bytes) {
                     log_perror("write to input file failed");
                     _exit(143);
