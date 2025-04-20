@@ -34,6 +34,7 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <fstream>
 
 #include "client.h"
 
@@ -56,6 +57,91 @@ bool dcc_is_preprocessed(const string &sfile)
     }
 
     return false;
+}
+
+std::string trim(const std::string& str) {
+    const auto strBegin = str.find_first_not_of(" \t\r\n");
+    if (strBegin == std::string::npos) return "";
+
+    const auto strEnd = str.find_last_not_of(" \t\r\n");
+    return str.substr(strBegin, strEnd - strBegin + 1);
+}
+
+std::string unquote(const std::string& str) {
+    if (str.size() >= 2 && str.front() == '"' && str.back() == '"') {
+        return str.substr(1, str.size() - 2);
+    }
+    return str;
+}
+
+bool extractJsonStringField(const std::string& line, const std::string& key, std::string& value) {
+    std::string searchKey = "\"" + key + "\"";
+    size_t keyPos = line.find(searchKey);
+    if (keyPos == std::string::npos) return false;
+
+    size_t colonPos = line.find(':', keyPos);
+    if (colonPos == std::string::npos) return false;
+
+    size_t startQuote = line.find('"', colonPos + 1);
+    if (startQuote == std::string::npos) return false;
+
+    size_t endQuote = line.find('"', startQuote + 1);
+    if (endQuote == std::string::npos) return false;
+
+    value = unquote(line.substr(startQuote, endQuote - startQuote + 1));
+    return true;
+}
+
+std::string getCompileCommand(const std::string& compileCommandsPath, const std::string& targetFilePath) {
+    std::ifstream file(compileCommandsPath);
+    if (!file) {
+        throw std::runtime_error("Cannot open compile_commands.json file.");
+    }
+
+    std::string line;
+    std::string currentFilePath;
+    std::string currentCommand;
+
+    while (std::getline(file, line)) {
+        std::string trimmed = trim(line);
+        std::string value;
+
+        if (extractJsonStringField(trimmed, "file", value)) {
+            currentFilePath = value;
+        } else if (extractJsonStringField(trimmed, "command", value)) {
+            currentCommand = value;
+        }
+
+        if (!currentFilePath.empty() && !currentCommand.empty()) {
+            if (currentFilePath == targetFilePath) {
+                return currentCommand;
+            }
+            currentFilePath.clear();
+            currentCommand.clear();
+        }
+    }
+
+    throw std::runtime_error("Compile command for the specified file was not found.");
+}
+
+
+// TODO duplicated code from file_util.cpp
+vector<string> split(const string &s, char delim) {
+    vector<string> elems;
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim)) {
+        if (!item.empty()) {
+            elems.push_back(item);
+        }
+    }
+    return elems;
+}
+
+// TODO duplicated code from arg.cpp
+inline int str_startswith(const char *head, const char *worm)
+{
+    return !strncmp(head, worm, strlen(head));
 }
 
 /**
@@ -238,6 +324,23 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         }
 
         if(arg.find("--extra-arg") != string::npos) {
+            continue;
+        }
+
+        if(arg == "-p") {
+            string compile_command_file_path = argv[++i];
+            compile_command_file_path += "/compile_commands.json";
+            std::string compile_command = getCompileCommand(compile_command_file_path, job.inputFile());
+            std::vector<string> splitted_compile_command = split(compile_command, ' ');
+            for(auto iter = splitted_compile_command.begin(); iter < splitted_compile_command.end(); ++iter) {
+                if (str_startswith("-I", iter->data())) {
+                    filteredArgs.push_back(strdup(iter->data()));
+                } else if (str_startswith("-isystem", iter->data())) {
+                    filteredArgs.push_back(strdup(iter->data()));
+                    iter++;
+                    filteredArgs.push_back(strdup(iter->data()));
+                }
+            }
             continue;
         }
 

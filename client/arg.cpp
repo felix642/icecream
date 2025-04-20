@@ -775,6 +775,9 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
             if (it->first == "-Xclang" || it->first == "-x" || is_argument_with_space(it->first.c_str())) {
                 ++it;
                 ++it;
+            } else if (compiler_is_clang_tidy(job) && it->first == "-p") {
+                ++it;
+                ++it;
             } else if (it->second != Arg_Rest || it->first.at(0) == '-'
                        || it->first.at(0) == '@') {
                 ++it;
