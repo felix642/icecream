@@ -327,7 +327,7 @@ bool ignore_unverified()
 // be worth it.
 bool output_needs_workaround(const CompileJob &job)
 {
-    if (compiler_is_clang(job))
+    if (compiler_is_clang(job) || compiler_is_clang_tidy(job))
         return false;
     if (explicit_no_show_caret)
         return false;
