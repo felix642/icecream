@@ -694,9 +694,7 @@ static int build_remote_int(CompileJob &job, UseCSMsg *usecs, MsgChannel *local_
         bool have_dwo_file = crmsg->have_dwo_file;
         delete crmsg;
 
-        assert(!job.outputFile().empty());
-
-        if (status == 0) {
+        if (status == 0 && !job.outputFile().empty()) {
             receive_file(job.outputFile(), cserver);
             if (have_dwo_file) {
                 string dwo_output = job.outputFile().substr(0, job.outputFile().rfind('.')) + ".dwo";

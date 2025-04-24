@@ -837,7 +837,7 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
                 always_local = true;
             }
 
-            if (!always_local && ofile.empty()) {
+            if (!always_local && ofile.empty() && !compiler_is_clang_tidy(job)) {
                 ofile = ifile.substr(0, dot_index);
 
                 if (seen_s) {
@@ -866,7 +866,7 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
 
     struct stat st;
 
-    if( !always_local ) {
+    if( !always_local && !compiler_is_clang_tidy(job)) {
         if (ofile.empty() || (!stat(ofile.c_str(), &st) && !S_ISREG(st.st_mode))) {
             log_warning() << "output file empty or not a regular file, building locally" << endl;
             always_local = true;
