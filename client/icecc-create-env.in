@@ -295,6 +295,11 @@ elif test "$1" = "--clang"; then
         shift
         gcc=1
     fi
+elif test "$1" = "--clang-tidy"; then
+  shift
+  added_clang_tidy=$1
+  shift
+  clang_tidy=1
 else
     if test -z "$1"; then
         usage
@@ -509,6 +514,16 @@ if test -n "$clang"; then
         touch $tempdir/fakeproc/proc/cpuinfo
         add_file $tempdir/fakeproc/proc/cpuinfo /proc/cpuinfo
     fi
+fi
+
+if test -n "$clang_tidy"; then
+    orig_clang_tidy=$added_clang_tidy
+    added_clang_tidy=$(resolve_path $added_clang_tidy)
+    stripprefix=$(dirname $(dirname $added_clang_tidy))
+    add_file $added_clang_tidy /usr/bin/clang-tidy
+
+    add_file $(file_name=as; command -v $file_name || echo $file_name) /usr/bin/as
+    add_file $(file_name=objcopy; command -v $file_name || echo $file_name) /usr/bin/objcopy
 fi
 
 # Do not do any prefix stripping on extra files, they (e.g. clang plugins) are usually
