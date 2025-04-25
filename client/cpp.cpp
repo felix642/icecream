@@ -390,9 +390,9 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         }
 
         if(arg == "-p") {
-            string compile_command_file_path = argv[++i];
-            compile_command_file_path += "/compile_commands.json";
-            std::string compile_command = getCompileCommand(compile_command_file_path, job.inputFile());
+            string compile_command_folder_path = argv[++i];
+            string compile_command_file_path = compile_command_folder_path + "/compile_commands.json";
+            string compile_command = getCompileCommand(compile_command_file_path, job.inputFile());
             std::vector<string> splitted_compile_command = split(compile_command, ' ');
             for(auto iter = splitted_compile_command.begin(); iter < splitted_compile_command.end(); ++iter) {
                 if (str_startswith("-I", iter->data())) {
@@ -405,6 +405,13 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
                     filteredArgs.push_back(strdup(iter->data()));
                 }
             }
+            
+            if(chdir(compile_command_folder_path.c_str()) != 0) {
+                ostringstream errmsg;
+                errmsg << "Failed to chdir to directory " <<  compile_command_folder_path << '\n';
+                log_perror(errmsg.str());
+            }
+
             continue;
         }
 
