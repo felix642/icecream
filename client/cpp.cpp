@@ -326,9 +326,9 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
         argv[i++] = strdup(job.inputFile().c_str());
 
         if (compiler_only_rewrite_includes(job)) {
-            if( compiler_is_clang(job)) {
+            if( compiler_is_clang(job)|| compiler_is_clang_tidy(job) ) {
                 argv[i++] = strdup("-frewrite-includes");
-            } else if (!compiler_is_clang_tidy(job)) { // gcc
+            } else { // gcc
                 argv[i++] = strdup("-fdirectives-only");
             }
         }

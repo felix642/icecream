@@ -351,6 +351,9 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             }
         } else {
             argv[i++] = strdup(input_file.c_str());
+            argv[i++] = strdup("--");
+            argv[i++] = strdup("-D__GLIBCXX_TYPE_INT_N_0=__int128");
+            argv[i++] = strdup("-D__GLIBCXX_BITSIZE_INT_N_0=128");
         }
 
         // before you add new args, check above for argc
