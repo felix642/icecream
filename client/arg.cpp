@@ -23,6 +23,9 @@
 
 #include "config.h"
 
+#include <fstream>
+#include <string>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -54,6 +57,88 @@ inline int str_startswith(const char *head, const char *worm)
 {
     return !strncmp(head, worm, strlen(head));
 }
+
+
+std::string trim(const std::string& str) {
+    const auto strBegin = str.find_first_not_of(" \t\r\n");
+    if (strBegin == std::string::npos) return "";
+
+    const auto strEnd = str.find_last_not_of(" \t\r\n");
+    return str.substr(strBegin, strEnd - strBegin + 1);
+}
+
+std::string unquote(const std::string& str) {
+    if (str.size() >= 2 && str.front() == '"' && str.back() == '"') {
+        return str.substr(1, str.size() - 2);
+    }
+    return str;
+}
+
+bool extractJsonStringField(const std::string& line, const std::string& key, std::string& value) {
+    std::string searchKey = "\"" + key + "\"";
+    size_t keyPos = line.find(searchKey);
+    if (keyPos == std::string::npos) return false;
+
+    size_t colonPos = line.find(':', keyPos);
+    if (colonPos == std::string::npos) return false;
+
+    size_t startQuote = line.find('"', colonPos + 1);
+    if (startQuote == std::string::npos) return false;
+
+    size_t endQuote = line.find('"', startQuote + 1);
+    if (endQuote == std::string::npos) return false;
+
+    value = unquote(line.substr(startQuote, endQuote - startQuote + 1));
+    return true;
+}
+
+std::string getCompileCommand(const std::string& compileCommandsPath, const std::string& targetFilePath) {
+    std::ifstream file(compileCommandsPath);
+    if (!file) {
+        throw std::runtime_error("Cannot open compile_commands.json file.");
+    }
+
+    std::string line;
+    std::string currentFilePath;
+    std::string currentCommand;
+
+    while (std::getline(file, line)) {
+        std::string trimmed = trim(line);
+        std::string value;
+
+        if (extractJsonStringField(trimmed, "file", value)) {
+            currentFilePath = value;
+        } else if (extractJsonStringField(trimmed, "command", value)) {
+            currentCommand = value;
+        }
+
+        if (!currentFilePath.empty() && !currentCommand.empty()) {
+            if (currentFilePath == targetFilePath) {
+                return currentCommand;
+            }
+            currentFilePath.clear();
+            currentCommand.clear();
+        }
+    }
+
+    throw std::runtime_error("Compile command for the specified file was not found.");
+}
+
+
+// TODO duplicated code from file_util.cpp
+vector<string> split(const string &s, char delim) {
+    vector<string> elems;
+    stringstream ss(s);
+    string item;
+    while (getline(ss, item, delim)) {
+        if (!item.empty()) {
+            elems.push_back(item);
+        }
+    }
+    return elems;
+}
+
+
 
 /* Some files should always be built locally... */
 static bool
@@ -316,6 +401,7 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
     bool seen_mcpu_native = false;
     bool seen_mtune_native = false;
     std::string seen_parallel_flto;
+    string compile_command_folder_path;
     const char *standard = nullptr;
     // if rewriting includes and precompiling on remote machine, then cpp args are not local
     Argument_Type Arg_Cpp = compiler_only_rewrite_includes(job) ? Arg_Rest : Arg_Local;
@@ -721,6 +807,10 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
                     seen_parallel_flto = a;
                 else if( !str_equal("-flto", a) && !str_equal("-flto=1", a))
                     seen_parallel_flto = a;
+            } else if (str_equal(a, "-p")) {
+                args.append(argv[i], Arg_Local);
+                compile_command_folder_path = argv[++i];
+                args.append(argv[i], Arg_Local);
             } else {
                 args.append(a, Arg_Rest);
 
@@ -870,6 +960,24 @@ int analyse_argv(const char * const *argv, CompileJob &job, bool icerun, list<st
         if (ofile.empty() || (!stat(ofile.c_str(), &st) && !S_ISREG(st.st_mode))) {
             log_warning() << "output file empty or not a regular file, building locally" << endl;
             always_local = true;
+        }
+    }
+    
+    if(!compile_command_folder_path.empty()) {
+        string compile_command_file_path = compile_command_folder_path + "/compile_commands.json";
+        string compile_command = getCompileCommand(compile_command_file_path, job.inputFile());
+        std::vector<string> splitted_compile_command = split(compile_command, ' ');
+        for(auto iter = splitted_compile_command.begin(); iter < splitted_compile_command.end(); ++iter) {
+            if (str_startswith("-I", iter->data())) {
+                args.append(iter->data(), Arg_Local);
+            } else if (str_startswith("-isystem", iter->data())) {
+                args.append(iter->data(), Arg_Local);
+                iter++;
+                args.append(iter->data(), Arg_Local);
+            } else if (str_startswith("-std=", iter->data())) {
+                args.append(iter->data(), Arg_Local);
+                args.append(std::string("--extra-arg=") + iter->data(), Arg_Remote);
+            }
         }
     }
 
