@@ -372,35 +372,35 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         close_debug();
 
         if ((-1 == close(sock_out[0])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for sock_out[0]");
         }
 
         if (-1 == dup2(sock_out[1], STDOUT_FILENO)){
-            log_perror("dup2 failed");
+            log_perror("dup2 failed for sock_out[1]");
         }
 
         if ((-1 == close(sock_out[1])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for sock_out[1]");
         }
 
         if ((-1 == close(sock_err[0])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for sock_err[0]");
         }
 
         if (-1 == dup2(sock_err[1], STDERR_FILENO)){
-            log_perror("dup2 failed");
+            log_perror("dup2 failed for sock_err[1]");
         }
 
         if ((-1 == close(sock_err[1])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for sock_err[1]");
         }
 
         if ((-1 == close(sock_in[1])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for sock_in[1]");
         }
 
         if ((-1 == close(ct_sock[1])) && (errno != EBADF)){
-            log_perror("close failed");
+            log_perror("close failed for ct_sock[1]");
         }
 
         // Clang-tidy does not support receiving data from stdin.
@@ -438,11 +438,11 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
             close(config_fd);
             close(ct_sock[0]);
         } else {
-            if (-1 == dup2(sock_in[0], input_fd)) {
-                log_perror("dup2 failed");
+            if (-1 == dup2(sock_in[0], STDIN_FILENO)) {
+                log_perror("dup2 failed for sock_in[0]");
             }
             if ((-1 == close(sock_in[0])) && (errno != EBADF)){
-                log_perror("close failed");
+                log_perror("close failed for sock_in[0]");
             }
         }
 
@@ -567,6 +567,14 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
                                     log_perror("close failed");
                                 }
                                 ct_sock[1] = -1;
+                            }
+
+                            if(!clang_tidy && !fcmsg && sock_in[1] != -1)
+                            {
+                                if (-1 == close(sock_in[1])){
+                                    log_perror("close failed");
+                                }
+                                sock_in[1] = -1;
                             }
                             delete msg;
                         }
