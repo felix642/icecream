@@ -308,7 +308,7 @@ pid_t call_cpp(CompileJob &job, int fdwrite, int fdread)
 
         int argc = flags.size();
         argc++; // the program
-        argc += 2; // -E file.i
+        argc += 3; // -E -C file.i
         argc += 1; // -frewrite-includes / -fdirectives-only
         argv = new char*[argc + 1];
         argv[0] = strdup(find_compiler(job).c_str());

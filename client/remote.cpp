@@ -616,9 +616,10 @@ static int build_remote_int(CompileJob &job, UseCSMsg *usecs, MsgChannel *local_
             throw;
         }
 
-        log_block wait_cpp("wait for clang-tidy config");
-
-        while (waitpid(tidy_pid, &status, 0) < 0 && errno == EINTR) {}
+        {
+            log_block wait_tidy("wait for clang-tidy config");
+            while (waitpid(tidy_pid, &status, 0) < 0 && errno == EINTR) {}
+        }
 
         if (shell_exit_status(status) != 0) {
             delete cserver;
