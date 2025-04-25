@@ -28,6 +28,7 @@
 #include "exitcode.h"
 #include "logging.h"
 #include "pipes.h"
+#include "file_util.h"
 #include <sys/select.h>
 #include <sys/stat.h>
 
@@ -123,6 +124,8 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
     int config_fd = -1;
     string input_file = "";
     string config_file = "";
+    std::string compilation_path = tmp_root + "/" + to_string(getpid());
+
     if(j.compilerName().find("clang-tidy") != string::npos)
     {
         // TODO, delete the file once the compilation is over.
@@ -130,7 +133,6 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
         // This means that the reported lines will not match what the user expects.
         // We should either fix this bug in clang-tidy
         // or relaunch a compilation on the user's machine to make sure the diagnostic is valid.
-        std::string compilation_path = tmp_root + "/" + to_string(getpid());
         mkdir(compilation_path.c_str(), 0700);
         size_t slash_index = j.inputFile().rfind('/'); 
         input_file = compilation_path + '/' + j.inputFile().substr(slash_index+1);
@@ -811,6 +813,10 @@ int work_it(CompileJob &j, unsigned int job_stat[], MsgChannel *client, CompileR
                     // this should never happen
                     assert(false);
                     return EXIT_DISTCC_FAILED;
+                }
+
+                if(clang_tidy) {
+                    rmpath(compilation_path.c_str());
                 }
 
                 if (shell_exit_status(status) != 0) {
